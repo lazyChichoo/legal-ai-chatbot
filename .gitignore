@@ -219,3 +219,14 @@ __marimo__/
 
 .env
 
+# ---- secrets ----
+  .env
+  .env.*
+  *.key
+
+  # ---- base64 transfer scratch ----
+  cg.txt
+
+  # ---- vector store (rebuildable) ----
+  chroma_db/
+  .chroma/
