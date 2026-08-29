@@ -87,7 +87,13 @@ FALLBACK_EN = ("This question is outside the current knowledge base. "
                "Please consult a qualified cross-border legal practitioner.")
 
 
-def ask(question, provisions, contract_text=None, max_retry=1, verbose=True):
+def ask(question, provisions, contract_text=None, max_retry=1, verbose=True,
+        trace=None):
+    """
+    trace: 传一个空 list 进来，就能拿到每一轮的审核明细
+           [{"round":1, "raw":AI原话, "problems":[...], "passed":False}, ...]
+           界面用它显示"程序拦了几次、拦了什么"。不传就跟以前一样。
+    """
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user",
@@ -114,7 +120,16 @@ def ask(question, provisions, contract_text=None, max_retry=1, verbose=True):
         case_ok, case_problems = case_check(question, reply)
         problems.extend(case_problems)
 
-        if cite_ok and lang_ok and case_ok:
+        passed = cite_ok and lang_ok and case_ok
+        if trace is not None:
+            trace.append({
+                "round": attempt + 1,
+                "raw": reply,
+                "problems": list(problems),
+                "passed": passed,
+            })
+
+        if passed:
             return enforce(reply, question)
 
         if verbose:
@@ -127,7 +142,10 @@ def ask(question, provisions, contract_text=None, max_retry=1, verbose=True):
 
     if verbose:
         print("!! 重试后仍不合格，改为输出兜底话术。")
+    if trace is not None:
+        trace.append({"round": None, "raw": None, "problems": ["重试后仍不合格，输出兜底话术"],
+                      "passed": False})
     return enforce(FALLBACK_CN if _is_chinese(question) else FALLBACK_EN, question)
 
 
-VERSION = "v4"
+VERSION = "v5"

@@ -58,4 +58,49 @@ def explain(question, contract_text=None, top_k=3, items=None):
     }
 
 
-VERSION = "v1"
+def answer_detailed(question, contract_text=None, top_k=3, items=None):
+    """
+    给界面用：一次拿到最终回答 + 全部审核明细。
+    返回 dict：
+      answer      最终回答
+      provisions  本次喂给 AI 的条文（含知识库编号）
+      pins        触发了哪些必带条文规则
+      law         合同法律适用的判断结果
+      trace       每一轮的审核明细（程序拦了什么）
+      called_api  有没有真的调用 AI（超范围时为 False）
+    """
+    pin = case_guard.pins(question)
+    provisions = kb.retrieve(question, items=items, top_k=top_k, pin=pin)
+    verdict, evidence = case_guard.detect_governing_law(contract_text)
+
+    info = {
+        "provisions": provisions,
+        "pins": pin,
+        "law": {"verdict": verdict, "evidence": evidence},
+        "trace": [],
+        "called_api": False,
+    }
+
+    if not provisions:
+        use_cn = output_guard.is_chinese(question)
+        base = llm.FALLBACK_CN if use_cn else llm.FALLBACK_EN
+        info["answer"] = output_guard.enforce(base, question)
+        return info
+
+    trace = []
+    info["called_api"] = True
+    info["answer"] = llm.ask(question, provisions, contract_text,
+                             verbose=False, trace=trace)
+    info["trace"] = trace
+    return info
+
+
+# 法律适用判断结果的人话说明，界面直接显示
+LAW_LABEL = {
+    "cisg_excluded": "合同已明确排除 CISG，本题按美国《统一商法典》(UCC) 第二编回答",
+    "state_law_only": "合同只选了美国某州法但没排除 CISG —— 仍然适用 CISG（这是高频误解）",
+    "unknown": "没有提供合同法律适用条款，按缔约国默认适用 CISG",
+}
+
+
+VERSION = "v2"
