@@ -11,14 +11,40 @@
 
 import re
 
-DISCLAIMER_CN = "本回复仅为普法参考，不构成法律意见，具体案件请咨询执业律师。"
-DISCLAIMER_EN = ("This response is for general legal information only and "
-                 "does not constitute legal advice.")
+# 法学组交付的固定免责声明，一字不改。
+# 这段是程序贴上去的，不是让 AI 自己写的——AI 写的版本一律先删掉再贴这个。
+DISCLAIMER_CN = (
+    "本系统提供的法律信息仅供参考，不构成正式法律意见，不可替代执业律师服务。"
+    "风险等级仅为初步提示，不代表确定性法律判断。涉及重大法律事项，请咨询执业律师。"
+    "因使用本系统信息产生的损失，开发团队不承担法律责任。"
+)
 
-# 认出"这一行是免责声明"的特征词，中英各留几个变体
+# 英文版是对上面那段的翻译，法学组尚未出具官方英文本，待其确认后替换。
+DISCLAIMER_EN = (
+    "The legal information provided by this system is for reference only. "
+    "It does not constitute formal legal advice and cannot replace the services "
+    "of a licensed attorney. Risk ratings are preliminary indications only and do "
+    "not represent definitive legal conclusions. For significant legal matters, "
+    "please consult a licensed attorney. The development team accepts no legal "
+    "liability for any loss arising from use of information provided by this system."
+)
+
+# 认出"这一行是免责声明"的特征词，中英各留几个变体。
+# 旧版本的特征词也留着，免得 AI 写出旧话术时删不掉。
+# 每个词都必须"只可能出现在免责声明里"。
+# 教训：早先放了"咨询执业律师"这种日常短语，结果正文里
+# "建议咨询执业律师"整行被当成声明删掉，回答只剩一句声明。
 _DISCLAIMER_MARKS = [
-    "仅为普法参考", "不构成法律意见", "咨询执业律师",
-    "GENERAL LEGAL INFORMATION", "DOES NOT CONSTITUTE LEGAL ADVICE",
+    # 新版（法学组固定稿）
+    "法律信息仅供参考", "不构成正式法律意见", "不可替代执业律师服务",
+    "风险等级仅为初步提示", "开发团队不承担法律责任",
+    "PROVIDED BY THIS SYSTEM IS FOR REFERENCE ONLY",
+    "CANNOT REPLACE THE SERVICES",
+    "RISK RATINGS ARE PRELIMINARY",
+    "ACCEPTS NO LEGAL LIABILITY",
+    # 旧版（防止模型沿用旧话术）
+    "仅为普法参考", "不构成法律意见",
+    "GENERAL LEGAL INFORMATION ONLY", "DOES NOT CONSTITUTE LEGAL ADVICE",
 ]
 
 
@@ -84,4 +110,4 @@ def check_language(reply, question):
     return True, ""
 
 
-VERSION = "v2"
+VERSION = "v3"

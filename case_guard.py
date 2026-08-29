@@ -61,8 +61,12 @@ _TRANSIT_WORDS = [
     # 用户口语说法（真实提问长这样）
     "拦截", "拦下", "拦住", "拦回", "拦货", "截留", "截住", "扣货", "扣下",
     "叫停", "追回货", "把货要回", "不让他提货", "不给他发",
+    # 2026-08-29 补：真实提问里最常见的说法漏在表外，导致停运题走不进追问流程
+    "别交货", "别发货", "别放货", "不要交货", "不要发货", "先别发", "暂缓发货",
+    "暂停发货", "暂停交货", "停止发货", "别给他", "不交给他", "退回来",
+    "叫船公司", "通知船公司", "通知承运人", "让船公司", "找船公司",
     "STOPPAGE", "STOP DELIVERY", "STOP IN TRANSIT", "SUSPEND DELIVERY",
-    "WITHHOLD DELIVERY",
+    "WITHHOLD DELIVERY", "HOLD THE SHIPMENT", "STOP THE SHIPMENT",
 ]
 
 # 三个关键事实，每项给若干"说明用户已经交代过"的线索词
@@ -198,13 +202,35 @@ LAW_DIRECTIVE = {
 # 四、恶意拒付三要件
 # ============================================================
 
-_REJECT_WORDS = ["拒付", "拒收", "不付款", "拖欠", "质量不符", "以质量为由",
-                 "货不对板", "挑毛病", "REJECT", "REFUSE TO PAY", "NON-CONFORMIT"]
+# 一望即知就是"以货物有问题为由拒付"的说法，单独出现即触发
+_REJECT_EXPLICIT = ["质量不符", "以质量为由", "货不对板", "挑毛病",
+                    "质量问题", "NON-CONFORMIT"]
+
+# "拒绝收/拒绝付"这一类
+_REFUSE_WORDS = ["拒付", "拒收", "不付款", "不给钱", "不肯付", "不肯收",
+                 "不要了", "退货", "退回来", "REJECT", "REFUSE TO PAY",
+                 "REFUSE DELIVERY", "REFUSE TO ACCEPT"]
+
+# "货有问题"这一类
+_DEFECT_WORDS = ["质量", "瑕疵", "不符", "有问题", "划痕", "破损", "损坏",
+                 "次品", "残次", "色差", "尺寸不对", "规格不对", "货不对",
+                 "DEFECT", "QUALITY", "DAMAGED", "SCRATCH", "NON-CONFORMIT"]
 
 
 def is_rejection_question(question):
+    """
+    只有"买方以货物有问题为由拒付/拒收"才算拒付三要件题。
+
+    单纯欠钱不算——"客户拖欠尾款""两个月不打款"走的是价金请求权（第2条），
+    硬套三要件会逼 AI 去讲毫不相干的瑕疵通知例外，讲不出来就被自己的
+    防线打回，最后吐兜底话术。这里必须"拒绝"和"有瑕疵"两件事同时出现。
+    """
     q = question.upper()
-    return any(w.upper() in q for w in _REJECT_WORDS)
+    if any(w.upper() in q for w in _REJECT_EXPLICIT):
+        return True
+    refuse = any(w.upper() in q for w in _REFUSE_WORDS)
+    defect = any(w.upper() in q for w in _DEFECT_WORDS)
+    return refuse and defect
 
 
 REJECT_DIRECTIVE = """
@@ -215,11 +241,61 @@ REJECT_DIRECTIVE = """
      书面通知了卖方，并且说明了不符合同情形的性质；
   3. 严重程度——瑕疵是否达到 CISG 下的"根本违约"，或 UCC 下破坏了"完美交付"要求。
 三条里只要有一条不满足，买方原则上就丧失以质量为由拒付的权利，卖方有权请求支付价金。
-但必须同时说明两个例外，不许省略：
-  - 若卖方在订约时已经知道或不可能不知道该瑕疵却没有告知买方，卖方不能援引期限和通知抗辩；
-  - 若买方对未及时通知有合理理由，其部分权利可能仍然保留。
+但必须同时说明两个例外，不许省略，并且必须写出条文编号：
+  - 例外一（CISG 第40条）：若卖方在订约时已经知道或不可能不知道该瑕疵却没有告知买方，
+    卖方不能援引第38条检验期与第39条通知期抗辩，买方即使迟延通知也不丧失权利；
+  - 例外二（CISG 第44条）：若买方对未按第39条第(1)款及时通知有合理理由，
+    买方仍保留两项权利，两项都必须写出来，不许只写减价：
+      (a) 按第50条要求减价；
+      (b) 要求损害赔偿——但不包括利润损失。
+    该条并不恢复买方拒收全部货物或宣告合同无效的权利。
+    注意：(b) 是对卖方不利的一半，漏讲会让卖方误判自己的风险敞口，绝对不许省。
 最后提醒：以上是初步判断方向，具体结论取决于合同约定的检验期与通知期原文。
 """
+
+
+# 拒付题的回答里，这两个例外必须出现——靠程序验收，不靠模型自觉
+_REJECT_MUST = [
+    (["第40条", "ART.40", "ARTICLE 40"], "例外一（CISG 第40条，卖方明知瑕疵不得抗辩）"),
+    (["第44条", "ART.44", "ARTICLE 44"], "例外二（CISG 第44条，买方有合理理由延迟通知）"),
+]
+
+
+def check_reject_reply(question, reply):
+    """拒付题必须讲全两个例外。返回 (是否合格, 问题列表)"""
+    if not is_rejection_question(question):
+        return (True, [])
+    r = reply.upper().replace(" ", "")
+    missing = []
+    for keys, label in _REJECT_MUST:
+        if not any(k.replace(" ", "") in r for k in keys):
+            missing.append(label)
+
+    # 讲了第44条，就必须把"还能要利润损失以外的损害赔偿"一起讲。
+    # 实测模型爱把这半句吞掉，只说"可以减价"——那是只讲了对卖方有利的一半，
+    # 卖方会误判成"买方最多砍点价"，实际还要挨一笔索赔。
+    if any(k.replace(" ", "") in r for k in ["第44条", "ART.44", "ARTICLE 44"]):
+        said_damages = ("损害赔偿" in reply) or ("DAMAGES" in r)
+        said_profit = ("利润" in reply) or ("LOSSOFPROFIT" in r)
+        if not (said_damages and said_profit):
+            missing.append("例外二漏了一半：买方在第44条下除了减价，"
+                           "还可以要求利润损失以外的损害赔偿，这句必须写出来")
+
+    if not missing:
+        return (True, [])
+    return (False, ["拒付题漏讲了必须说明的例外：" + "；".join(missing) +
+                    "。这个系统是给卖方用的，只讲对卖方有利的一半会让卖方误判，必须补齐。"])
+
+
+# 哪类问题必须强制带上哪些知识库条目（给 kb.retrieve 的 pin 参数用）
+def pins(question):
+    """返回必带条文的标签列表，如 ["reject"]。"""
+    tags = []
+    if is_rejection_question(question):
+        tags.append("reject")
+    if is_transit_question(question):
+        tags.append("transit")
+    return tags
 
 
 # ============================================================
@@ -259,7 +335,11 @@ def check_all(question, reply):
     if not ok:
         problems.append(prob)
 
+    ok, probs = check_reject_reply(question, reply)
+    if not ok:
+        problems.extend(probs)
+
     return (len(problems) == 0, problems)
 
 
-VERSION = "v3"
+VERSION = "v7"

@@ -80,12 +80,11 @@ def build_user_message(question, provisions, contract_text=None):
     return "\n".join(lines)
 
 
-FALLBACK_CN = ("该问题超出当前知识库范围，建议咨询具备涉外执业资质的律师。\n"
-               "本回复仅为普法参考，不构成法律意见，具体案件请咨询执业律师。")
+# 兜底话术只写正文，免责声明一律由 output_guard.enforce() 统一贴，
+# 免得两处各留一份、改了一处漏一处。
+FALLBACK_CN = "该问题超出当前知识库范围，建议向具备涉外执业资质的律师当面核实。"
 FALLBACK_EN = ("This question is outside the current knowledge base. "
-               "Please consult a qualified cross-border legal practitioner.\n"
-               "This response is for general legal information only and "
-               "does not constitute legal advice.")
+               "Please consult a qualified cross-border legal practitioner.")
 
 
 def ask(question, provisions, contract_text=None, max_retry=1, verbose=True):
@@ -128,7 +127,7 @@ def ask(question, provisions, contract_text=None, max_retry=1, verbose=True):
 
     if verbose:
         print("!! 重试后仍不合格，改为输出兜底话术。")
-    return FALLBACK_CN if _is_chinese(question) else FALLBACK_EN
+    return enforce(FALLBACK_CN if _is_chinese(question) else FALLBACK_EN, question)
 
 
-VERSION = "v3"
+VERSION = "v4"

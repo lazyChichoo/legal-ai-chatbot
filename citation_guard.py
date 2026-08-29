@@ -63,13 +63,23 @@ _LAW_KEYS = [
 
 
 def _law_near(text, pos, window=40):
-    """看编号前面这一小段文字里提到了哪部法。认不出来就返回 None。"""
-    left = text[max(0, pos - window):pos]
+    """
+    看编号前面这一小段文字里提到了哪部法。认不出来就返回 None。
+
+    必须取【离编号最近】的那个法律名，不能按 _LAW_KEYS 的先后顺序认。
+    反例：知识库第13条写的是
+        "UCC 2-606（接受货物）、2-602（拒收通知）；CISG Art.38（检验）"
+    按顺序认会把 Art.38 记成 UCC 38，导致 AI 正确引用"CISG第38条"时被误判成编造出处。
+    """
+    start = max(0, pos - window)
+    left = text[start:pos]
+    best_law, best_at = None, -1
     for law, words in _LAW_KEYS:
         for w in words:
-            if w in left:
-                return law
-    return None
+            at = left.rfind(w)
+            if at > best_at:
+                best_law, best_at = law, at
+    return best_law
 
 
 # ---------- 2. 从一段文字里揪出所有法条编号 ----------
@@ -160,4 +170,4 @@ def build_fix_message(problems):
     return "\n".join(lines)
 
 
-VERSION = "v2"
+VERSION = "v3"
