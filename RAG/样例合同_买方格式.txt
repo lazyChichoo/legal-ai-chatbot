@@ -1,0 +1,28 @@
+PURCHASE ORDER / 采购订单
+Buyer: ABC Trading LLC (Delaware, USA)    Seller: 宁波某某进出口有限公司
+
+1. GOODS 货物
+   Stainless steel fittings, 20,000 pcs, as per specification Annex A.
+
+2. PRICE AND PAYMENT 价格与付款
+   Total USD 186,000. FOB Ningbo. Payment: T/T 30 days after arrival of goods
+   at Buyer's warehouse and Buyer's acceptance.
+
+3. DELIVERY 交货
+   Shipment on or before 30 November 2026.
+
+4. QUALITY 质量
+   Goods shall conform in all respects to the specification. Buyer may reject
+   non-conforming goods.
+
+5. FORCE MAJEURE 不可抗力
+   Neither party shall be liable for failure to perform due to force majeure.
+   因不可抗力导致无法履行的，遭受方免责。
+
+6. GOVERNING LAW 适用法律
+   This Agreement shall be governed by the laws of the State of New York.
+   The United Nations Convention on Contracts for the International Sale of
+   Goods shall not apply.
+
+7. ENTIRE AGREEMENT 完整协议
+   This Purchase Order constitutes the entire agreement between the parties.

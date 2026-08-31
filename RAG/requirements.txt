@@ -1,1 +1,12 @@
-chromadb>=0.5.0
+# Cross-border breach remedy AI pre-review system
+# Install:  python -m pip install -r requirements.txt
+
+# Layer 1 - knowledge base + Chroma retrieval
+chromadb
+
+# Layer 2 - AI answering and guards
+openai>=1.0,<4         # DeepSeek is called through the OpenAI-compatible SDK
+python-dotenv>=1.0     # loads DEEPSEEK_API_KEY from .env
+
+# Layer 3 - Streamlit UI (app.py)
+streamlit>=1.30
