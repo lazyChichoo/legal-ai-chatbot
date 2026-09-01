@@ -24,11 +24,56 @@ import output_guard
 # 超范围文案直接用 llm 里那份，全系统只有一处措辞
 
 
-def answer(question, contract_text=None, top_k=3, verbose=False, items=None):
+# ---------- 本题属于哪个场景 ----------
+# 法学组口径：场景就是知识库那 20 条本身，大类写在每条的【场景标签】里
+#（实体救济 10 条 / 合同审查 6 条 / 程序应急 4 条）。
+# 这一行完全由程序算出来——哪几条被检索命中是程序自己挑的，照实报即可，
+# 不经过 AI，也就不存在编造场景的可能。
+SCENE_EN = {
+    "实体救济": "substantive remedies",
+    "合同审查": "contract review",
+    "程序应急": "procedure & emergency response",
+}
+
+
+def scenes(provisions):
+    """把命中的条文整理成场景清单：[{"no":9,"title":...,"scene":...}, ...]，
+    排第一个的就是本题的主场景。"""
+    return [{"no": p["no"], "title": p.get("title", ""),
+             "scene": p.get("scene", "")} for p in provisions]
+
+
+def scene_header(provisions, question):
+    """
+    场景行的文字版，贴在回答最前面。
+    一条都没命中就返回空串 —— 那说明超出知识库范围，本来就没有场景可报。
+
+    英文提问时只报编号和大类，不翻译条目标题：知识库只有中文标题，
+    硬翻等于我自己造一版法律术语译名，等法学组给了中英对照表再补。
+    """
+    if not provisions:
+        return ""
+    use_cn = output_guard.is_chinese(question)
+    lines = []
+    for i, p in enumerate(provisions):
+        if use_cn:
+            tag = "【本题场景】" if i == 0 else "【相关场景】"
+            lines.append("%s知识库第%d条 · %s（%s）"
+                         % (tag, p["no"], p.get("title", ""), p.get("scene", "")))
+        else:
+            tag = "[Scenario]" if i == 0 else "[Related] "
+            en = SCENE_EN.get(p.get("scene", ""), p.get("scene", ""))
+            lines.append("%s Knowledge base entry #%d (%s)" % (tag, p["no"], en))
+    return "\n".join(lines)
+
+
+def answer(question, contract_text=None, top_k=3, verbose=False, items=None,
+           show_scene=True):
     """
     question      : 用户问题（中文或英文）
     contract_text : 合同全文，没有就传 None（用于判断适用 CISG 还是美国州法）
     top_k         : 最多带几条知识库条文（必带条文不占这个名额）
+    show_scene    : 回答开头是否带"本题属于哪个场景"，界面要自己排版就传 False
     返回：最终回答字符串
     """
     pin = case_guard.pins(question)
@@ -39,7 +84,12 @@ def answer(question, contract_text=None, top_k=3, verbose=False, items=None):
         base = llm.FALLBACK_CN if use_cn else llm.FALLBACK_EN
         return output_guard.enforce(base, question)
 
-    return llm.ask(question, provisions, contract_text, verbose=verbose)
+    reply = llm.ask(question, provisions, contract_text, verbose=verbose)
+    if show_scene:
+        head = scene_header(provisions, question)
+        if head:
+            reply = head + "\n\n" + reply
+    return reply
 
 
 def explain(question, contract_text=None, top_k=3, items=None):
@@ -62,12 +112,16 @@ def answer_detailed(question, contract_text=None, top_k=3, items=None):
     """
     给界面用：一次拿到最终回答 + 全部审核明细。
     返回 dict：
-      answer      最终回答
-      provisions  本次喂给 AI 的条文（含知识库编号）
-      pins        触发了哪些必带条文规则
-      law         合同法律适用的判断结果
-      trace       每一轮的审核明细（程序拦了什么）
-      called_api  有没有真的调用 AI（超范围时为 False）
+      answer        最终回答（注意：这里【不带】场景行，跟 bot.answer() 不一样，
+                    界面用下面两个字段自己排版，免得同一句话显示两遍）
+      scenes        本题命中的场景清单，排第一个的是主场景
+                    [{"no":9,"title":"…","scene":"实体救济"}, ...]
+      scene_header  上面那份的现成文字版，懒得自己排版就直接贴在回答前面
+      provisions    本次喂给 AI 的条文（含知识库编号）
+      pins          触发了哪些必带条文规则
+      law           合同法律适用的判断结果
+      trace         每一轮的审核明细（程序拦了什么）
+      called_api    有没有真的调用 AI（超范围时为 False）
     """
     pin = case_guard.pins(question)
     provisions = kb.retrieve(question, items=items, top_k=top_k, pin=pin)
@@ -75,6 +129,8 @@ def answer_detailed(question, contract_text=None, top_k=3, items=None):
 
     info = {
         "provisions": provisions,
+        "scenes": scenes(provisions),
+        "scene_header": scene_header(provisions, question),
         "pins": pin,
         "law": {"verdict": verdict, "evidence": evidence},
         "trace": [],
@@ -103,4 +159,4 @@ LAW_LABEL = {
 }
 
 
-VERSION = "v2"
+VERSION = "v3"

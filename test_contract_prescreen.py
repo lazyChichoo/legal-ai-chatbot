@@ -29,11 +29,16 @@ def nos(items):
 
 print("\n=== 第 1 组：空合同 / 白纸一张 ===")
 r = cc.scan("")
-check("空合同：规则 1-5 全部报缺失", nos(r["risks"]) == [1, 2, 3, 4, 5], str(nos(r["risks"])))
-check("空合同：规则 6 不触发（压根没有不可抗力条款）",
-      6 not in nos(r["risks"]))
+check("空合同：规则 1-6 全部报缺失", nos(r["risks"]) == [1, 2, 3, 4, 5, 6], str(nos(r["risks"])))
+# 2026-09-01 法学组答复：完全没有不可抗力条款 = 中风险，所以规则 6 现在也要触发
+check("空合同：规则 6 触发（完全没有不可抗力条款）",
+      6 in nos(r["risks"]))
+check("空合同：规则 6 判为中风险",
+      [x for x in r["risks"] if x["no"] == 6][0]["level"] == cc.MID)
+check("空合同：规则 6 说的是「完全没有」不是「过于笼统」",
+      "完全没有" in [x for x in r["risks"] if x["no"] == 6][0]["detail"])
 check("空合同：高风险 2 项（规则 1、4）", r["summary"][cc.HIGH] == 2)
-check("空合同：中风险 3 项（规则 2、3、5）", r["summary"][cc.MID] == 3)
+check("空合同：中风险 4 项（规则 2、3、5、6）", r["summary"][cc.MID] == 4)
 check("None 也不炸", cc.scan(None)["length"] == 0)
 
 
