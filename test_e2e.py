@@ -3,8 +3,15 @@
 端到端离线验收：问题 -> 检索 -> AI（替身）-> 三道防线 -> 回答
 
 不联网、不花钱。跑法：
-    PYTHONPATH=_stub python3 test_e2e.py
+    python test_e2e.py
 """
+import os
+import sys
+# 这一行必须在 import openai 之前：保证拿到的是 _stub/openai.py 那个假 AI 替身，
+# 而不是机器上装的真 SDK。少了它，装过 openai 的电脑会报
+# "module 'openai' has no attribute 'REPLIES'"，还以为是代码坏了。
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_stub"))
+
 import openai   # 这里导入的是 _stub/openai.py 替身
 import bot
 
@@ -127,6 +134,31 @@ case(
     lambda out, sent: (
         ("普法参考" not in out and out.endswith(DISC) and out.count("不承担法律责任") == 1),
         "免责声明没被换成固定稿"),
+)
+
+print()
+print("=== 7. 超范围回答后面还带私货，程序必须砍干净（真接口实测踩到的）===")
+_DIRTY = ("\u8be5\u95ee\u9898\u8d85\u51fa\u5f53\u524d\u77e5\u8bc6\u5e93\u8303\u56f4\uff0c"
+          "\u5efa\u8bae\u54a8\u8be2\u5177\u5907\u6d89\u5916\u6267\u4e1a\u8d44\u8d28\u7684\u5f8b\u5e08\u3002\n\n"
+          "\u3010\u5b9e\u52a1\u63d0\u793a\u3011\u9009\u6ce8\u518c\u5730\u65f6\uff0c"
+          "\u53ef\u5148\u6bd4\u8f83\u4e24\u5dde\u7684\u5e74\u8d39\u548c\u7533\u62a5\u6d41\u7a0b\u3002")
+case(
+    "超范围却附赠实务提示 -> 私货被砍掉",
+    "买方以质量不符拒付，我能要回货款吗？",
+    [_DIRTY],
+    lambda out, sent: (
+        ("实务提示" not in out and "超出当前知识库范围" in out and out.endswith(DISC)),
+        "私货没砍干净：" + out[:120]),
+)
+case(
+    "英文超范围同样只留一句",
+    "Can I register a company in Delaware?",
+    ["This question is outside the current knowledge base. "
+     "Please consult a qualified cross-border legal practitioner.\n\n"
+     "[Practical tip] Compare the annual fees of both states first."],
+    lambda out, sent: (
+        ("Practical tip" not in out and "outside the current knowledge base" in out),
+        "英文私货没砍掉：" + out[:120]),
 )
 
 print()

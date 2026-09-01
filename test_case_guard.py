@@ -85,6 +85,28 @@ check("拒付题带上三要件", "三要件核对" in d2, True)
 check("排除 CISG 的合同走 UCC", "不许引用 CISG" in d2, True)
 check("不该带停运指令", "停运权关键事实" in d2, False)
 
+# 2026-09-01 打真接口打出来的两个假阳性，都是"中文放行、英文拦截"的不对称
+print()
+print("== 六、中英不对称的假阳性（真接口实测踩到的）==")
+import citation_guard as cig
+
+# ① "UCC Article 2" 是《统一商法典》第二编，篇章名，不是法条号
+check("UCC Article 2 不算引用编号", cig.extract_refs("under UCC Article 2 the perfect tender rule applies"), set())
+check("中文'第二编'本来就不算", cig.extract_refs("按《统一商法典》(UCC) 第二编判断"), set())
+check("真 UCC 条号照样认得", ("UCC", "2-601") in cig.extract_refs("see UCC 2-601"), True)
+check("CISG Art.2 不受牵连", ("CISG", "2") in cig.extract_refs("CISG Article 2 excludes consumer sales"), True)
+
+_EN_Q = "The buyer rejected my goods claiming non-conformity. Is there a notice deadline?"
+_EN_OK = ("Under Art.39 the buyer must give notice within a reasonable time. "
+          "Under Art.40 the seller cannot rely on Art.38 and Art.39 if it knew of the defect. "
+          "Under Art.44 the buyer may reduce the price under Art.50 and claim damages, "
+          "excluding lost profits.")
+# ② 英文写 lost profits / profits 都算讲到了利润损失，不许卡在一种写法上
+check("英文 'lost profits' 算讲全了", cg.check_reject_reply(_EN_Q, _EN_OK)[0], True)
+check("英文 'loss of profit' 也算", cg.check_reject_reply(_EN_Q, _EN_OK.replace("lost profits", "loss of profit"))[0], True)
+check("真漏了利润这半句还是要拦",
+      cg.check_reject_reply(_EN_Q, _EN_OK.replace(" and claim damages, excluding lost profits", ""))[0], False)
+
 print()
 print("=" * 40)
 print("全部通过" if fail == 0 else "有 %d 项没过" % fail)

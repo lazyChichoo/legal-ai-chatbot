@@ -4,8 +4,15 @@
 
 法学组口径：场景就是知识库那 20 条，大类写在【场景标签】里。
 这一层不调 AI，所以不联网、不花钱。跑法：
-    PYTHONPATH=_stub python3 test_scene.py
+    python test_scene.py
 """
+import os
+import sys
+# 这一行必须在 import openai 之前：保证拿到的是 _stub/openai.py 那个假 AI 替身，
+# 而不是机器上装的真 SDK。少了它，装过 openai 的电脑会报
+# "module 'openai' has no attribute 'REPLIES'"，还以为是代码坏了。
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_stub"))
+
 import openai   # _stub/openai.py 替身，第 5 组要用
 import bot
 import kb

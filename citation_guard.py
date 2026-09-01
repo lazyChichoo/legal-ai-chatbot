@@ -103,6 +103,14 @@ def extract_refs(text):
         if n:
             refs.add((_law_near(t, m.start()), str(n)))
 
+    # "UCC Article 2" 说的是《统一商法典》第二编（买卖编），那是篇章名，不是法条号。
+    # UCC 的法条一律写成 2-601 这种带横杠的形式，所以裸数字的 UCC 引用根本不是出处，丢掉。
+    # 【为什么非改不可】实测同一个意思，中文写"《统一商法典》第二编"因为不是"第X条"而漏过，
+    # 英文写 "UCC Article 2" 却被判成编造出处，回答被打回、重试还是被打回，最后吐兜底话术。
+    # 中英两种命运不一致，等于英文提问天然吃亏。这里必须对齐。
+    refs = set((law, num) for (law, num) in refs
+               if not (law == "UCC" and "-" not in num))
+
     return refs
 
 

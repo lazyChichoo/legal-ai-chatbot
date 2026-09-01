@@ -276,7 +276,9 @@ def check_reject_reply(question, reply):
     # 卖方会误判成"买方最多砍点价"，实际还要挨一笔索赔。
     if any(k.replace(" ", "") in r for k in ["第44条", "ART.44", "ARTICLE 44"]):
         said_damages = ("损害赔偿" in reply) or ("DAMAGES" in r)
-        said_profit = ("利润" in reply) or ("LOSSOFPROFIT" in r)
+        # 只认 "LOSSOFPROFIT" 太死：模型英文写 "lost profits" / "profits" 都算讲到了，
+        # 卡在一种写法上会把合格的英文回答误判成漏讲，逼它兜底。认 PROFIT 就够。
+        said_profit = ("利润" in reply) or ("PROFIT" in r)
         if not (said_damages and said_profit):
             missing.append("例外二漏了一半：买方在第44条下除了减价，"
                            "还可以要求利润损失以外的损害赔偿，这句必须写出来")

@@ -72,7 +72,7 @@
 │   └── contract_prescreen.py     # 合同初筛：比对 6 条规则，出风险报告
 │
 ├── 第三层：界面
-│   └── app.py                    # Streamlit 界面
+│   └── app.py                    # Streamlit 界面（界面组维护）
 │
 ├── 测试与验收
 │   ├── test_case_guard.py        # 硬规则，28 项
@@ -345,14 +345,13 @@ info = bot.answer_detailed("客户说沙发有划痕要拒付，合法吗？", c
 ### 7.1 离线测试（不联网、不花钱）
 
 ```bash
-set PYTHONPATH=_stub        # Windows
-export PYTHONPATH=_stub     # macOS / Linux
-
-python test_case_guard.py       # 硬规则，28 项
-python test_e2e.py              # 端到端，7 项
-python test_scene.py            # 场景识别，36 项
-python test_contract_prescreen.py  # 合同初筛，43 项
+python test_case_guard.py          # 硬规则，35 项
+python test_e2e.py                 # 端到端，9 项
+python test_scene.py               # 场景识别，36 项
+python test_contract_prescreen.py  # 合同初筛，45 项
 ```
+
+不用设 `PYTHONPATH`，测试文件自己会去找 `_stub/`。
 
 四个都要看到「全部通过」。`_stub/` 是"假 AI"——按剧本吐预设回答，
 专门用来检验三道防线拦不拦得住，跟真实调用无关。
@@ -431,8 +430,10 @@ __pycache__/
 **Q：能直接上传 Chroma 数据库吗？**
 不建议。上传知识源，本地重新生成。
 
-**Q：测试报 `No module named openai`？**
-`PYTHONPATH` 没设成 `_stub`。Windows 用 `set PYTHONPATH=_stub`，Linux/Mac 用 `export`。
+**Q：测试报 `No module named openai`，或者 `module 'openai' has no attribute 'REPLIES'`？**
+前者是没装 `openai`（跑 `python -m pip install -r requirements.txt`）；
+后者是 import 到了真 SDK 而不是 `_stub/openai.py` 替身——测试文件已经自己处理了，
+如果还报，检查 `_stub/` 文件夹在不在仓库根目录下。
 
 **Q：AI 回答里出现了知识库里没有的法条怎么办？**
 不会出现——`citation_guard` 会拦下并要求重写。如果真的出现了，那是 bug，

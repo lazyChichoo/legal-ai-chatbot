@@ -48,6 +48,25 @@ _DISCLAIMER_MARKS = [
 ]
 
 
+# ---------- 超范围回答：只许留那一句 ----------
+# 铁律第 4 条要求：条文不足以回答时，只输出这一句，后面除免责声明外一个字都不许有。
+# 实测模型不守：一边说"超出知识库范围"，一边接着给【实务提示】，还捎带一句
+# 不相干的 UCC 提醒。这种回答比干脆拒答更糟——用户会以为后面那半是有依据的。
+# 所以由程序兜底：只要认出这句话，后面全部砍掉，换成标准句。
+OUT_OF_SCOPE_CN = "该问题超出当前知识库范围，建议咨询具备涉外执业资质的律师。"
+OUT_OF_SCOPE_EN = ("This question is outside the current knowledge base. "
+                   "Please consult a qualified cross-border legal practitioner.")
+
+_OUT_MARKS = ["超出当前知识库范围", "超出知识库范围",
+              "OUTSIDE THE CURRENT KNOWLEDGE BASE", "OUTSIDE THE KNOWLEDGE BASE"]
+
+
+def is_out_of_scope(reply):
+    """回答里出现了"超范围"那句话就算超范围回答。"""
+    up = reply.upper()
+    return any(m in reply or m in up for m in _OUT_MARKS)
+
+
 def is_chinese(text):
     """问题里有汉字就当作中文提问。"""
     for ch in text:
@@ -81,6 +100,12 @@ def enforce(reply, question):
     use_cn = is_chinese(question)
 
     body = _strip_disclaimer(reply)
+
+    # 超范围回答：不管模型后面还写了什么，一律砍掉，只留标准那一句。
+    if is_out_of_scope(body):
+        return (OUT_OF_SCOPE_CN if use_cn else OUT_OF_SCOPE_EN) + "\n\n" + \
+               (DISCLAIMER_CN if use_cn else DISCLAIMER_EN)
+
     if not use_cn:
         body = _cn_source_to_en(body)
 
