@@ -15,6 +15,7 @@
 用法：  python 篡改测试.py
 """
 import os
+import re
 import sys
 
 # 必须确保用的是真 SDK，不是 _stub 里的假替身
@@ -75,10 +76,22 @@ def main():
 
     print("=" * 70)
     print("【结论】")
-    hit7 = "7%" in b
-    hit2030 = ("20-30" in a) or ("20%" in a) or ("30%" in a)
+
+    # 【别再犯一次】老版本这里写的是 ("20%" in a)，结果被 AI 在实务提示里
+    # 自己发明的"10%-20%"匹配到了，明明没照抄条文却报"是"，给了个假绿灯。
+    # 现在只认区间连写（20-30% / 20%-30% / 20%到30%），不认孤零零一个 20%。
+    hit2030 = bool(re.search(r"20\s*[%％]?\s*[-—~－到至]\s*30\s*[%％]", a))
+    hit7 = bool(re.search(r"(?<!\d)7\s*[%％]", b))
+
     print("  第一遍回答里出现 20-30% 这个区间：" + ("是" if hit2030 else "否"))
     print("  第二遍回答里出现 7%              ：" + ("是" if hit7 else "否"))
+
+    # 顺带查一遍：两次回答里有没有条文里根本没有的比例（AI 自己编的）
+    import citation_guard as cg
+    for label, reply, ki in (("第一遍", a, kb.load()), ("第二遍", b, load_tampered())):
+        ok, why = cg.check_numbers(reply, kb.retrieve(QUESTION, ki))
+        print("  %s 有没有编造的比例        ：%s" % (label, "没有" if ok else "有！" + why[0]))
+
     print()
     if hit7:
         print("  ✅ 改了知识库，回答就跟着变。")

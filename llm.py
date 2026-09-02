@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from citation_guard import check, build_fix_message
+from citation_guard import check, check_numbers, build_fix_message
 from output_guard import enforce, check_language
 from case_guard import directives as case_directives, check_all as case_check
 
@@ -118,6 +118,10 @@ def ask(question, provisions, contract_text=None, max_retry=1, verbose=True,
         cite_ok, cite_problems = check(reply, provisions)
         problems.extend(cite_problems)
 
+        # 百分比必须照抄条文，AI 编的比例一律打回（实测它会在实务提示里编）
+        num_ok, num_problems = check_numbers(reply, provisions)
+        problems.extend(num_problems)
+
         lang_ok, lang_problem = check_language(reply, question)
         if not lang_ok:
             problems.append(lang_problem)
@@ -125,7 +129,7 @@ def ask(question, provisions, contract_text=None, max_retry=1, verbose=True,
         case_ok, case_problems = case_check(question, reply)
         problems.extend(case_problems)
 
-        passed = cite_ok and lang_ok and case_ok
+        passed = cite_ok and num_ok and lang_ok and case_ok
         if trace is not None:
             trace.append({
                 "round": attempt + 1,
