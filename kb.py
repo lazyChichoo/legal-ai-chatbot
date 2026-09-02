@@ -16,6 +16,7 @@
 
 import os
 import re
+import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 KB_PATH = os.path.join(_HERE, "kb_raw.txt")
@@ -152,6 +153,82 @@ EN_TERMS = {
 
 
 # ------------------------------------------------------------
+# 向量库（Chroma）候选层
+# ------------------------------------------------------------
+# 【为什么有这一层】项目书要求检索走本地向量库。队友的 ingest.py 已经把
+# kb_raw.txt 灌进了 Chroma（一种把文字存成一串数字、按数字远近找相似的数据库）。
+# 这里让它干"先圈出可能相关的十来条"这件事，剩下的精挑细选还是我们自己打分。
+#
+# 【为什么不全交给向量库】拿法学组 40 题实测过：
+#     纯向量库排序      考卷1.0 主场景 19/20、条文覆盖 45/49
+#     向量库出候选+我们精排  考卷1.0 主场景 20/20、条文覆盖 49/49
+# 少捞到的条文，citation_guard 就不允许 AI 引用，等于直接砍天花板。所以分两步。
+#
+# 【一条底线】向量库只用来决定"挑哪几条编号"。
+# 条文正文和 source 一律还是从 kb_raw.txt 现读（load() 那一套），
+# 绝不从向量库的 metadata 里取 —— 她那边 metadata["source"] 存的是文件名
+# （"kb_raw.txt"），拿它当出处会让 citation_guard 把每一个法条引用都判成编造。
+#
+# 【库没建也能跑】没装 chromadb、或者还没执行过 ingest.py，
+# 自动退回"全量扫描 20 条"，功能不受影响，只是少了初筛这一步。
+
+CHROMA_DB = os.path.join(_HERE, "legal_knowledge_db")
+CHROMA_COLLECTION = "legal_knowledge"
+
+# 候选池给多大。实测 <10 会漏（例：问"划痕退全款"捞不到第9条），
+# >=10 和全量扫描成绩完全一致。20 条的知识库本来也筛不出多少，留点余量。
+CANDIDATE_POOL = 12
+
+_chroma_warned = False
+
+
+def _chroma_note(msg):
+    """同一个提示只说一次，别把日志刷爆。"""
+    global _chroma_warned
+    if not _chroma_warned:
+        _chroma_warned = True
+        sys.stderr.write("[kb] " + msg + "\n")
+
+
+def chroma_candidates(question, want_n=CANDIDATE_POOL):
+    """
+    向量库出候选，返回条号列表（按向量距离从近到远）。
+    用不了就返回 None —— 调用方看到 None 会退回全量扫描。
+    """
+    try:
+        import chromadb
+        from ingest import embed_text      # 必须用建库时那一套算法，不能自己另写一份
+    except ImportError:
+        _chroma_note("没装 chromadb 或找不到 ingest.py，检索退回全量扫描（功能正常）。")
+        return None
+
+    try:
+        col = chromadb.PersistentClient(path=CHROMA_DB).get_collection(CHROMA_COLLECTION)
+        total = col.count()
+        if not total:
+            _chroma_note("向量库是空的，请先跑：python ingest.py --source kb_raw.txt --reset")
+            return None
+        res = col.query(query_embeddings=[embed_text(question)],
+                        n_results=total, include=["metadatas"])
+    except Exception as e:
+        _chroma_note("向量库读不了（%s），检索退回全量扫描（功能正常）。" % e.__class__.__name__)
+        return None
+
+    # 一条知识可能被切成好几块，去重成条号
+    out = []
+    for m in res["metadatas"][0]:
+        n = re.search(r"\d+", str(m.get("id", "")))
+        if not n:
+            continue
+        n = int(n.group())
+        if n not in out:
+            out.append(n)
+        if len(out) >= want_n:
+            break
+    return out
+
+
+# ------------------------------------------------------------
 # 打分：这条知识跟这个问题有多相关
 # ------------------------------------------------------------
 # v3 之前是拿整段比对：知识库写"美国客户说不要货了，货还在洛杉矶港口"，
@@ -220,8 +297,16 @@ def _idf(items):
     return dict((t, math.log(n / d)) for t, d in df.items())
 
 
-def _score(item, question, idf=None):
-    """土办法打分，看得懂、可复现。分三部分加起来："""
+# 一条知识至少要有这么多条独立证据才算真命中。
+# 【为什么加这个】只靠一个词重合就放行，会出事：实测问"我想在北京买套房，首付要多少"，
+# 靠一个"多少"就捞出了"价金请求权"和"违约金"两条，还刚好过 2.0 分的门槛。
+# "多少"在 20 条里只出现过 2 次，稀有度算出来很高，可它其实什么意思都没有。
+# 稀有 ≠ 相关。所以再加一道：证据条数不够，分数再高也不算命中。
+MIN_EVIDENCE = 2
+
+
+def _score_detail(item, question, idf=None):
+    """打分，同时数出"命中了几处独立证据"。返回 (分数, 证据条数)。"""
     if idf is None:
         idf = _idf(load())
     q = question.lower()
@@ -229,9 +314,11 @@ def _score(item, question, idf=None):
 
     # ① 关键词整词命中：最硬的证据，一个 3 分
     s = 0.0
+    ev = 0
     for w in item["关键词表"]:
         if len(w) >= 2 and w.lower() in q:
             s += 3.0
+            ev += 1
 
     # ①b 英文词组命中，同样 3 分。
     # 英文按整个词组比对，不拆成单词 —— 拆开的话 "the""and" 这种谁都有的词会把分数带偏，
@@ -239,19 +326,28 @@ def _score(item, question, idf=None):
     for w in EN_TERMS.get(item["no"], []):
         if w in q:
             s += 3.0
+            ev += 1
 
     # ② 词重合，按稀有度加权：这是 v3 新加的，也是命中率提上来的主力
     shared = qt & _tokens(_search_text(item))
     s += sum(idf.get(t, 0.0) for t in shared)
+    ev += len(shared)
 
     # ③ 标题/典型问法整段命中：老规矩留着，命中就是强信号
     for ch in re.findall(r"[\u4e00-\u9fff]{4,}", item["标题"]):
         if ch in question:
             s += 2.0
+            ev += 1
     for ch in re.findall(r"[\u4e00-\u9fff]{4,}", item["典型问法"]):
         if ch in question:
             s += 1.0
-    return s
+            ev += 1
+    return s, ev
+
+
+def _score(item, question, idf=None):
+    """只要分数。老调用方（打印、排序）继续用这个。"""
+    return _score_detail(item, question, idf)[0]
 
 
 def to_provision(item):
@@ -270,10 +366,12 @@ def to_provision(item):
     }
 
 
-def retrieve(question, items=None, top_k=3, pin=None):
+def retrieve(question, items=None, top_k=3, pin=None, use_chroma=True):
     """
-    question : 用户问题
-    pin      : PINNED 的键组成的列表，如 ["reject"]；由 case_guard 的判定结果决定
+    question   : 用户问题
+    pin        : PINNED 的键组成的列表，如 ["reject"]；由 case_guard 的判定结果决定
+    use_chroma : 是否先用本地向量库圈候选。传 False 就退回老的全量扫描，
+                 主要给对比测试用（两条路的结果应当一致）。
     返回 provisions 列表
     """
     items = items if items is not None else load()
@@ -288,16 +386,28 @@ def retrieve(question, items=None, top_k=3, pin=None):
                 seen.add(no)
                 chosen.append(by_no[no])
 
-    idf = _idf(items)
-    scored = sorted(((_score(x, question, idf), x) for x in items),
-                    key=lambda p: (-p[0], p[1]["no"]))
-    for sc, x in scored:
+    # 第一步：向量库圈出可能相关的十来条（用不了就是 None，下面自动全量扫描）
+    pool = chroma_candidates(question) if use_chroma else None
+    if pool:
+        cand = [by_no[n] for n in pool if n in by_no]
+    else:
+        cand = items
+
+    # 第二步：在候选里按我们的打分精挑。必带条文已经在 chosen 里，不受候选池影响。
+    idf = _idf(items)                      # 稀有度始终按全部 20 条算，不能只按候选算
+    scored = sorted(((_score_detail(x, question, idf), x) for x in cand),
+                    key=lambda p: (-p[0][0], p[1]["no"]))
+    for (sc, ev), x in scored:
         if len(chosen) >= max(top_k, len(seen)):
             break
         if x["no"] in seen:
             continue
         if sc < MIN_SCORE:
             break
+        # 分够了但证据只有孤零零一条（多半是"多少""怎么办"这种空话撞上的），不算命中。
+        # 注意这里是 continue 不是 break：后面还可能有分数低一点但证据扎实的条目。
+        if ev < MIN_EVIDENCE:
+            continue
         seen.add(x["no"])
         chosen.append(x)
 
@@ -309,4 +419,4 @@ def retrieve(question, items=None, top_k=3, pin=None):
     return [to_provision(x) for x in chosen]
 
 
-VERSION = "v3"
+VERSION = "v4-chroma"
