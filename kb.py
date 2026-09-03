@@ -357,7 +357,12 @@ def to_provision(item):
         body += "\n【风险提示】" + item["风险提示"]
     return {
         "source": item["法律依据"],
-        "text": "（知识库第%d条·%s）%s" % (item["no"], item["标题"], body),
+        # T6 修复：这里原本在正文前拼「（知识库第N条·标题）」。铁律3 让 AI「出处只能从
+        # 【参考条文】里已给出的编号中选」，AI 看见这个编号就照抄成（来源：知识库第2条），
+        # citation_guard 认定不是合法法条编号 → 打回 → 两轮都拦 → 兜底话术。
+        # 是我们自己给 AI 挖的坑：让它引编号，又给了它一个不许引的编号。
+        # 条号另有 "no" 字段供界面用，喂给 AI 的正文里一个编号都不该有。
+        "text": body,
         "no": item["no"],
         # 下面两个字段只给"本题属于哪个场景"那一行用，不参与喂给 AI 的内容。
         # citation_guard 只读 source，llm 只读 source 和 text，多带字段是安全的。
