@@ -4,7 +4,6 @@ import os
 import ingest
 import bot
 import contract_prescreen
-
 # 页面配置
 st.set_page_config(
     page_title="中美跨境法律AI助手",
@@ -13,7 +12,6 @@ st.set_page_config(
 )
 # 尝试导入聊天后端（容错，导入失败不崩溃页面）
 chat_available = True
-
 # 初始化会话状态，保存聊天记录
 if "messages" not in st.session_state:
     st.session_state.messages = [
@@ -63,6 +61,25 @@ with tab_chat:
                         st.caption(info["scene_header"])
                     resp = info["answer"]
                     st.write(resp)
+
+                    # ========== 组长加分任务：法条来源 + 重写历史 折叠面板 ==========
+                    with st.expander("🔍 查看本次依据法条与重写记录"):
+                        st.markdown("**📑AI参考的知识库法条：**")
+                        if "retrieved_docs" in info and info["retrieved_docs"]:
+                            for idx, doc in enumerate(info["retrieved_docs"]):
+                                st.markdown(f"- {doc}")
+                        else:
+                            st.caption("本次没有检索到知识库法条")
+
+                        st.divider()
+                        st.markdown("**✏️AI重写历史记录：**")
+                        if "rewrite_history" in info and info["rewrite_history"]:
+                            for idx, old_text in enumerate(info["rewrite_history"]):
+                                st.markdown(f"> 第{idx+1}次草稿：\n{old_text}")
+                        else:
+                            st.caption("没有发生重写，直接输出最终答案")
+                    # ========== 加分代码结束 ==========
+
                 st.session_state.messages.append({"role":"assistant","content":resp})
             else:
                 st.info("聊天后端接口待确认，知识库上传功能可测试。")
