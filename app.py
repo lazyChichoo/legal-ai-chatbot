@@ -4,18 +4,36 @@ import os
 import ingest
 import bot
 import contract_prescreen
+
 # 页面配置
 st.set_page_config(
-    page_title="中美跨境法律AI助手",
+    page_title="法小盾——面向对美出口卖方的跨境违约救济AI预审系统",
     page_icon="⚖️",
     layout="wide"
 )
+
+# ── 可选访问口令：环境变量 APP_PASSWORD 有值时才启用，本地默认不设、直接可用 ──
+_pw = os.environ.get("APP_PASSWORD", "")
+if _pw and not st.session_state.get("_auth_ok"):
+    st.title("⚖️ 法小盾")
+    st.caption("面向对美出口卖方的跨境违约救济 AI 预审系统")
+    st.caption("本站为参赛作品演示环境，请输入访问口令。")
+    _typed = st.text_input("访问口令", type="password")
+    if _typed:
+        if _typed == _pw:
+            st.session_state["_auth_ok"] = True
+            st.rerun()
+        else:
+            st.error("口令不正确")
+    st.stop()
+
 # 尝试导入聊天后端（容错，导入失败不崩溃页面）
 chat_available = True
+
 # 初始化会话状态，保存聊天记录
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content":"欢迎使用中美跨境法律AI助手。侧边栏可以上传扩充知识库。"}
+        {"role": "assistant", "content":"欢迎使用法小盾。请描述你遇到的跨境交易纠纷，系统会依据知识库条文给出带出处的预审意见。"}
     ]
 # 侧边栏：知识库上传模块【你的核心功能，完整】
 with st.sidebar:
@@ -43,6 +61,10 @@ with st.sidebar:
 > 底层检索：Chroma初筛 + TF‑IDF精排
 > 项目初始化命令：`python ingest.py --source kb_raw.txt --reset`
 """)
+# 页面主标题
+st.title("⚖️ 法小盾")
+st.caption("面向对美出口卖方的跨境违约救济 AI 预审系统")
+
 # 主页面tab
 tab_chat, tab_contract = st.tabs(["💬法律问答","📄合同风险预审"])
 # 聊天页面
@@ -65,21 +87,33 @@ with tab_chat:
                     # ========== 组长加分任务：法条来源 + 重写历史 折叠面板 ==========
                     with st.expander("🔍 查看本次依据法条与重写记录"):
                         st.markdown("**📑AI参考的知识库法条：**")
-                        if "retrieved_docs" in info and info["retrieved_docs"]:
-                            for idx, doc in enumerate(info["retrieved_docs"]):
-                                st.markdown(f"- {doc}")
+                        if info["provisions"]:
+                            for p in info["provisions"]:
+                                st.markdown("**第 %d 条 · %s**" % (p["no"], p["title"]))
+                                st.caption("法律依据：" + p["source"])
+                            st.info("以上是本次唯一喂给 AI 的材料，知识库里其余条文它看不到。")
                         else:
-                            st.caption("本次没有检索到知识库法条")
+                            st.caption("本次没有命中任何法条，系统直接拒答，未调用 AI")
 
                         st.divider()
                         st.markdown("**✏️AI重写历史记录：**")
-                        if "rewrite_history" in info and info["rewrite_history"]:
-                            for idx, old_text in enumerate(info["rewrite_history"]):
-                                st.markdown(f"> 第{idx+1}次草稿：\n{old_text}")
+                        blocked = [t for t in info["trace"] if not t["passed"]]
+                        if not info["called_api"]:
+                            st.caption("本次未调用 AI，没有审核记录")
+                        elif not blocked:
+                            st.caption("AI 一次通过，程序没有拦截")
                         else:
-                            st.caption("没有发生重写，直接输出最终答案")
+                            for t in blocked:
+                                if t["round"]:
+                                    st.markdown("**第 %d 轮被程序打回，原因：**" % t["round"])
+                                else:
+                                    st.markdown("**两轮都没通过，改为输出拒答话术：**")
+                                for prob in t["problems"]:
+                                    st.markdown("- " + prob)
+                                if t["raw"]:
+                                    st.caption("AI 当时写的原话（已被拦下，没给用户看）：")
+                                    st.code(t["raw"], language=None)
                     # ========== 加分代码结束 ==========
-
                 st.session_state.messages.append({"role":"assistant","content":resp})
             else:
                 st.info("聊天后端接口待确认，知识库上传功能可测试。")
