@@ -102,6 +102,7 @@ def retrieve(query: str, db_path: str = "./legal_knowledge_db", collection_name:
             "source": metadata["source"],
             "title": metadata["title"],
             "category": metadata["category"],
+            "article": clean_text(metadata.get("article", "")),
             "risk_level": metadata.get("risk_level", ""),
             "scenario": metadata["scenario"],
             "answer": clean_text(metadata.get("answer", document)),
@@ -149,14 +150,25 @@ def _reference_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
+def _reference_matches(reference: str, basis: str) -> bool:
+    if re.search(r"\bucc\b", reference, re.IGNORECASE):
+        section = re.search(r"\d+-\d+(?:\(\d+\))?", reference)
+        if section:
+            return bool(re.search(rf"(?<!\d){re.escape(section.group())}(?!\d)", basis))
+    if re.search(r"\bcisg\b", reference, re.IGNORECASE):
+        article = re.search(r"art\.?\s*(\d+(?:\(\d+\))?)", reference, re.IGNORECASE)
+        if article:
+            return bool(re.search(rf"art\.?\s*{re.escape(article.group(1))}(?!\d)", basis, re.IGNORECASE))
+    return _reference_key(reference) in _reference_key(basis)
+
+
 def evaluate_exam(path: str | Path, db_path: str = "./legal_knowledge_db", collection_name: str = "legal_knowledge", top_k: int = 5, tag_weight: float = 0.25) -> dict[str, Any]:
     cases = load_exam_cases(path)
     results = []
     for case in cases:
         retrieved = retrieve(case["query"], db_path, collection_name, top_k, tag_weight)
         top_basis = retrieved[0]["legal_basis"] if retrieved else ""
-        top_key = _reference_key(top_basis)
-        matched = [reference for reference in case["references"] if _reference_key(reference) in top_key]
+        matched = [reference for reference in case["references"] if _reference_matches(reference, top_basis)]
         coverage = len(matched) / len(case["references"]) if case["references"] else 0.0
         results.append({"number": case["number"], "hit": bool(matched), "coverage": coverage, "matched": matched, "expected": case["references"], "top_title": retrieved[0]["title"] if retrieved else ""})
     hit_count = sum(item["hit"] for item in results)
@@ -192,6 +204,8 @@ def main() -> None:
         print(f"标题：{item['title']}")
         print(f"分类：{item['category']}")
         print(f"\n回答：\n{item['answer']}")
+        if item["article"] and item["article"] != item["answer"]:
+            print(f"\n对应条文：\n{item['article']}")
         print(f"\n法律依据：\n{item['legal_basis'] or '暂无'}")
         print(f"\n合同审查点：\n{item['review_points'] or '暂无'}")
         print(f"\n风险提示：\n{item['risk_warning'] or '暂无'}")

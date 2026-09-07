@@ -1,6 +1,7 @@
 import unittest
 
 from ingest import Material, split_material
+from retrieve import _reference_matches
 
 
 class TestRAGMaterialChunking(unittest.TestCase):
@@ -27,6 +28,13 @@ class TestRAGMaterialChunking(unittest.TestCase):
         self.assertIn("卖方有权要求仲裁并保留证据。", chunks[0]["text"])
         self.assertIn("CISG Art. 61", chunks[0]["text"])
         self.assertIn("确认仲裁机构和送达方式。", chunks[0]["text"])
+
+    def test_reference_matching_handles_adjacent_citations(self):
+        basis = "UCC §2-606（接受货物）、§2-602（拒收通知）；CISG Art.38（检验）、Art.39（通知不符）"
+
+        self.assertTrue(_reference_matches("UCC §2-602", basis))
+        self.assertTrue(_reference_matches("CISG Art.39", basis))
+        self.assertTrue(_reference_matches("UCC §2-703", "UCC Article 2§2-703（卖方救济）"))
 
 
 if __name__ == "__main__":
