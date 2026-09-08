@@ -217,6 +217,14 @@ _DEFECT_WORDS = ["质量", "瑕疵", "不符", "有问题", "划痕", "破损", 
                  "DEFECT", "QUALITY", "DAMAGED", "SCRATCH", "NON-CONFORMIT"]
 
 
+# 【2026-09-08 修】「单据不符」「单证不符」说的是信用证单证不一致，
+# 不是货物有瑕疵。不摘掉的话，"信用证被银行以单据不符拒付了" 会同时命中
+# 拒绝类词"拒付" 和 瑕疵类词"不符"，被误判成货物瑕疵拒收题，
+# 于是强行塞进拒收必带条文（第9、13条），把真正相关的第2、5条挤出去。
+# 实测：只影响考卷第10题，其余19题结果完全不变。
+_DOC_MISMATCH = ["单据不符", "单证不符", "文件不符", "不符点", "单单不符", "单证不一致"]
+
+
 def is_rejection_question(question):
     """
     只有"买方以货物有问题为由拒付/拒收"才算拒付三要件题。
@@ -225,7 +233,10 @@ def is_rejection_question(question):
     硬套三要件会逼 AI 去讲毫不相干的瑕疵通知例外，讲不出来就被自己的
     防线打回，最后吐兜底话术。这里必须"拒绝"和"有瑕疵"两件事同时出现。
     """
-    q = question.upper()
+    q = question
+    for _w in _DOC_MISMATCH:
+        q = q.replace(_w, "")          # 单证不符 ≠ 货物有瑕疵，先摘掉再判
+    q = q.upper()
     if any(w.upper() in q for w in _REJECT_EXPLICIT):
         return True
     refuse = any(w.upper() in q for w in _REFUSE_WORDS)
