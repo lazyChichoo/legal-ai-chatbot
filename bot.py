@@ -81,7 +81,8 @@ def answer(question, contract_text=None, top_k=3, verbose=False, items=None,
 
     if not provisions:
         use_cn = output_guard.is_chinese(question)
-        base = llm.FALLBACK_CN if use_cn else llm.FALLBACK_EN
+        base = (output_guard.out_of_scope_reply(question) if use_cn
+                else llm.FALLBACK_EN)
         return output_guard.enforce(base, question)
 
     reply = llm.ask(question, provisions, contract_text, verbose=verbose)
@@ -139,7 +140,8 @@ def answer_detailed(question, contract_text=None, top_k=3, items=None):
 
     if not provisions:
         use_cn = output_guard.is_chinese(question)
-        base = llm.FALLBACK_CN if use_cn else llm.FALLBACK_EN
+        base = (output_guard.out_of_scope_reply(question) if use_cn
+                else llm.FALLBACK_EN)
         info["answer"] = output_guard.enforce(base, question)
         return info
 

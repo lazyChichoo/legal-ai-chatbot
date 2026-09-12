@@ -73,6 +73,17 @@ def _law_near(text, pos, window=40):
     """
     start = max(0, pos - window)
     left = text[start:pos]
+    # 【2026-09-12 修】不许跨过分号去认法律名。
+    # 反例：知识库第4条写的是
+    #     "CISG Art.58（付款交货同时）；UCC §2-703（卖方一般救济）；中国《民法典》第447条（留置权）"
+    # 往前 40 字会越过分号抓到 UCC，把"第447条"错标成 (UCC, "447")，
+    # 接着被下面"UCC 裸数字不是出处"那条规则整个丢掉 —— 依据栏明明写了 447，
+    # 解析出来却没有。AI 照着条文正文引用《民法典》第447条，反被判成编造出处。
+    # 分号分隔的是不同法律，认法律名只能在同一小节内找。
+    for _sep in ("；", ";", "。"):
+        _at = left.rfind(_sep)
+        if _at >= 0:
+            left = left[_at + 1:]
     best_law, best_at = None, -1
     for law, words in _LAW_KEYS:
         for w in words:
