@@ -56,8 +56,50 @@ def _parse_block(block):
     return item
 
 
+# ============================================================
+# 【知识库来源】法学组交付的 20 条知识，有两种等价格式：
+#   kb_raw.txt              纯文本，按【字段】分段
+#   legal_knowledge_20.json 同样 20 条，字段结构化（建向量库也用它）
+# 两份内容已核对一致（20 条标题 19 条逐字相同，法律依据 19 条逐字相同），
+# 条号含义完全对应，所以 PINNED / EN_TERMS / case_guard 全都不用改。
+# 默认读 json；设环境变量 KB_SOURCE=txt 可切回纯文本。
+# ============================================================
+KB_SOURCE = os.environ.get("KB_SOURCE", "json").strip().lower()
+JSON_PATH = os.path.join(_HERE, "legal_knowledge_20.json")
+
+
+def _load_json(path=None):
+    """把 legal_knowledge_20.json 读成和 kb_raw.txt 解析结果一样的结构。"""
+    import json as _json
+    with open(path or JSON_PATH, "r", encoding="utf-8") as f:
+        raw = _json.load(f)
+
+    items = []
+    for i, x in enumerate(raw, 1):
+        kws = x.get("keywords") or []
+        if isinstance(kws, str):
+            kws = [w.strip() for w in re.split(r"[,，、]", kws) if w.strip()]
+        items.append({
+            "编号": "第%d条" % i, "no": i,
+            "标题": x.get("title") or "",
+            "场景标签": x.get("category") or "",
+            "风险等级": x.get("risk_level") or "",
+            "典型问法": x.get("typical_question") or "",
+            "回答": x.get("answer") or x.get("article") or "",
+            "法律依据": x.get("legal_basis") or "",
+            "合同审查点": x.get("review_points") or "",
+            "风险提示": x.get("risk_warning") or "",
+            "关键词": "、".join(kws), "关键词表": kws,
+        })
+    items.sort(key=lambda z: z["no"])
+    return items
+
+
 def load(path=None):
     """读取知识库，返回列表，按编号排序。"""
+    if path is None and KB_SOURCE == "json":
+        return _load_json()
+
     with open(path or KB_PATH, "r", encoding="utf-8") as f:
         raw = f.read()
 
