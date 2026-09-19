@@ -254,6 +254,18 @@ with tab_chat:
                 else:
                     st.caption("本次没有命中任何知识库法条，系统直接拒答，未调用大模型。")
 
+                if msg.get("cases"):
+                    st.markdown("**AI 参考的相关案例：**")
+                    for c in msg["cases"]:
+                        st.markdown("**%s**" % c.get("title", "案例"))
+                        matched = c.get("matched_provisions") or c.get("linked_provisions") or []
+                        st.caption("本次匹配知识库第%s条 ｜ %s" % (
+                            "、".join(str(number) for number in matched) or "未知",
+                            c.get("source", "案例库"),
+                        ))
+                        st.markdown('<div class="prov">%s</div>' % _esc_br(c.get("answer") or c.get("text", "")),
+                                    unsafe_allow_html=True)
+
                 st.divider()
                 st.markdown("**AI 重写历史记录（输出防护校验）：**")
                 if not msg.get("called_api"):
@@ -273,6 +285,30 @@ with tab_chat:
                             st.caption("AI 原始输出（已拦截，未展示给用户）：")
                             st.code(t["raw"], language=None)
 
+    previous_question = next(
+        (item["content"] for item in reversed(st.session_state.messages)
+         if item.get("role") == "user"),
+        "",
+    )
+    if previous_question:
+        st.markdown("**补充本轮信息（可选）**")
+        st.caption("上一轮问题：%s" % previous_question)
+        st.caption("补充事实、金额、时间或对方回复，系统会结合上一轮问题重新检索法条和案例。")
+        with st.form("follow_up_form", clear_on_submit=True):
+            follow_up = st.text_area(
+                "补充信息",
+                height=90,
+                label_visibility="collapsed",
+                placeholder="例如：合同约定交货后 30 天付款，对方已经逾期 15 天。",
+            )
+            follow_up_submit = st.form_submit_button("结合补充信息重新分析", use_container_width=True)
+
+        if follow_up_submit:
+            if not follow_up.strip():
+                st.warning("请填写需要补充的事实信息。")
+            else:
+                pending = "%s\n\n【补充信息】\n%s" % (previous_question, follow_up.strip())
+
     # 输入框必须放在最后：它是 sticky 贴底的，排在中间会浮在对话上方。
     typed = st.chat_input("请输入你的跨境法律问题，例如：买家拖欠货款我该如何维权？")
     if typed:
@@ -288,6 +324,7 @@ with tab_chat:
                 "content": info["answer"],
                 "scene_header": info.get("scene_header"),
                 "provisions": info.get("provisions"),
+                "cases": info.get("cases"),
                 "trace": info.get("trace"),
                 "called_api": info.get("called_api"),
             })

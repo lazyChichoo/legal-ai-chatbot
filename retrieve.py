@@ -118,6 +118,64 @@ def retrieve(query: str, db_path: str = "./legal_knowledge_db", collection_name:
     return [item[2] for item in ranked[:top_k]]
 
 
+def retrieve_cases(query: str, db_path: str = "./legal_knowledge_db", collection_name: str = "legal_cases", top_k: int = 3, tag_weight: float = 0.25, provision_nos: list[int] | None = None, provision_scores: dict[int, float] | None = None) -> list[dict[str, Any]]:
+    """Retrieve case-law entries from a separate collection without disturbing the main legal knowledge base."""
+    if not query.strip():
+        raise ValueError("query 不能为空")
+    try:
+        import chromadb
+    except ImportError as exc:
+        raise RuntimeError("请先安装依赖：python -m pip install -r requirements.txt") from exc
+    try:
+        collection = chromadb.PersistentClient(path=db_path).get_collection(collection_name)
+    except Exception:
+        return []
+    if collection.count() == 0:
+        return []
+    # 案例文档可能被切成多个片段；扫描整个 collection 后按案例 id 去重，
+    # 否则相似度最高的多个片段会挤掉其他真实案例。
+    candidate_count = collection.count()
+    result = collection.query(query_embeddings=[embed_text(query)], n_results=candidate_count, include=["documents", "metadatas", "distances"])
+    ranked = []
+    seen_cases = set()
+    query_tokens = set(tokenize(query))
+    for document, metadata, distance in zip(result["documents"][0], result["metadatas"][0], result["distances"][0]):
+        linked_raw = metadata.get("linked_provisions", "[]")
+        try:
+            linked = {int(item) for item in (json.loads(linked_raw) if isinstance(linked_raw, str) else linked_raw)}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            linked = set()
+        if provision_nos and not linked.intersection(provision_nos):
+            continue
+        matched_provisions = sorted(linked.intersection(provision_nos or linked))
+        provision_match_score = max(
+            (provision_scores or {}).get(number, 0.0) for number in matched_provisions
+        ) if matched_provisions else 0.0
+        case_key = metadata.get("id") or (metadata.get("source", collection_name), metadata.get("title", "案例"))
+        if case_key in seen_cases:
+            continue
+        seen_cases.add(case_key)
+        doc_tokens = set(tokenize(document))
+        overlap = len(query_tokens & doc_tokens)
+        score = overlap * 12 - float(distance)
+        ranked.append((score, overlap, {
+            "text": document,
+            "source": metadata.get("source", collection_name),
+            "title": metadata.get("title", "案例"),
+            "category": metadata.get("category", "合同审查"),
+            "article": clean_text(metadata.get("article", document)),
+            "answer": clean_text(metadata.get("answer", document)),
+            "legal_basis": clean_text(metadata.get("legal_basis", "")),
+            "risk_level": metadata.get("risk_level", "参考案例"),
+            "linked_provisions": sorted(linked),
+            "matched_provisions": matched_provisions,
+            "provision_match_score": round(provision_match_score, 4),
+            "score": round(score, 4),
+        }))
+    ranked.sort(key=lambda item: (item[2]["provision_match_score"], item[0]), reverse=True)
+    return [item[2] for item in ranked[:top_k]]
+
+
 def evaluate_retrieval(cases: list[dict[str, Any]], db_path: str = "./legal_knowledge_db", collection_name: str = "legal_knowledge", top_k: int = 5, tag_weight: float = 0.25) -> float:
     """Return hit accuracy for cases like {"query": ..., "sources": [...]}."""
     if not cases:
