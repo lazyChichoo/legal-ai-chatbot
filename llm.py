@@ -10,7 +10,7 @@ from case_guard import directives as case_directives, check_all as case_check
 
 load_dotenv()
 client = OpenAI(
-    api_key=os.environ["DEEPSEEK_API_KEY"],
+    api_key=os.environ.get("DEEPSEEK_API_KEY") or __import__("streamlit").secrets["DEEPSEEK_API_KEY"],
     base_url="https://api.deepseek.com",
 )
 
