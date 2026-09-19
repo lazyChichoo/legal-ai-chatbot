@@ -33,6 +33,7 @@ class Material:
     legal_basis: str = ""
     review_points: str = ""
     risk_warning: str = ""
+    linked_provisions: list[int] = None
 
 
 def tokenize(text: str) -> list[str]:
@@ -92,6 +93,7 @@ def _material(record: dict[str, Any], index: int, source: str) -> Material:
         _value(record, "legal_basis", "法律依据"),
         _value(record, "review_points", "合同审查点"),
         _value(record, "risk_warning", "风险提示"),
+        [int(item) for item in record.get("linked_provisions", [])],
     )
 
 
@@ -129,6 +131,62 @@ def parse_template_text(text: str) -> list[dict[str, Any]]:
     return records
 
 
+def parse_case_library_text(text: str, source: str | Path | None = None) -> list[dict[str, Any]]:
+    """Parse a plain docx/txt case library into the same record schema as legal knowledge.
+
+    This is a fallback for case libraries that are raw legal text, not a strict
+    【编号】... template. It keeps the main knowledge base unchanged while letting
+    the project ingest a case file into a separate collection later.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+
+    blocks = []
+    current_title = ""
+    current_lines: list[str] = []
+    case_pattern = re.compile(r"^案例\s*(\d+)\s+(.+)$")
+    for line in cleaned.splitlines():
+        candidate = line.strip()
+        match = case_pattern.match(candidate)
+        if match:
+            if current_lines:
+                blocks.append((current_title, "\n".join(current_lines).strip()))
+            current_title = f"案例{match.group(1)} {match.group(2).strip()}"
+            current_lines = [candidate]
+        elif current_lines:
+            current_lines.append(candidate)
+    if current_lines:
+        blocks.append((current_title, "\n".join(current_lines).strip()))
+    if not blocks:
+        blocks = [(next((line.strip() for line in cleaned.splitlines() if line.strip()), "案例库条目"), cleaned)]
+
+    stem = Path(str(source or "case")).stem or "case"
+    records = []
+    for index, (title, article) in enumerate(blocks, 1):
+        title = title[:120].rstrip("。；,，）)")
+        linked = []
+        linked_match = re.search(r"【对应知识库】([^\n]+)", article)
+        if linked_match:
+            linked = [int(item) for item in re.findall(r"\d+", linked_match.group(1))]
+        records.append({
+            "id": f"case-{stem}-{index:03d}",
+            "title": title,
+            "article": article,
+            "scenario": "合同审查",
+            "category": "合同审查",
+            "keywords": [token.strip() for token in re.split(r"[,，、;；\s]+", title) if token.strip()][:8],
+            "risk_level": "参考案例",
+            "typical_question": title,
+            "answer": article,
+            "legal_basis": "",
+            "review_points": article,
+            "risk_warning": "参考案例，不构成正式法律意见。",
+            "linked_provisions": linked,
+        })
+    return records
+
+
 def _read_text_source(path: Path) -> str:
     """Read plain text or Word documents saved with a misleading .txt suffix."""
     with path.open("rb") as handle:
@@ -160,13 +218,19 @@ def load_materials(source: str | Path, expected: int | None = None, allow_fewer:
     records: list[tuple[dict[str, Any], str]] = []
     for file in files:
         if file.suffix == ".txt":
-            parsed = parse_template_text(_read_text_source(file))
+            text = _read_text_source(file)
+            parsed = parse_template_text(text)
+            if not parsed:
+                parsed = parse_case_library_text(text, file)
             records.extend((record, str(file)) for record in parsed)
         elif file.suffix == ".csv":
             with file.open(encoding="utf-8-sig", newline="") as handle:
                 records.extend((dict(row), str(file)) for row in csv.DictReader(handle))
         elif file.suffix in (".docx", ".word"):
-            parsed = parse_template_text(_read_text_source(file))
+            text = _read_text_source(file)
+            parsed = parse_template_text(text)
+            if not parsed:
+                parsed = parse_case_library_text(text, file)
             records.extend((record, str(file)) for record in parsed)
         else:
             with file.open(encoding="utf-8") as handle:
@@ -177,7 +241,7 @@ def load_materials(source: str | Path, expected: int | None = None, allow_fewer:
     if expected is not None and len(records) < expected and not allow_fewer:
         raise ValueError(f"需要 {expected} 条资料，实际读取 {len(records)} 条；用 --allow-fewer 可关闭此检查")
     if not records and source_is_file:
-        raise ValueError(f"文件中未找到【编号】知识条目：{path}")
+        raise ValueError(f"文件中未找到【编号】知识条目或案例内容：{path}")
     if not records:
         raise ValueError(f"未找到资料：{path}")
     return [_material(record, index, source_name) for index, (record, source_name) in enumerate(records[:expected], 1)]
@@ -212,7 +276,8 @@ def split_material(material: Material, chunk_size: int = 800, overlap: int = 80)
     start = 0
     while start < len(text):
         end = min(start + chunk_size, len(text))
-        chunks.append({"text": text[start:end], "metadata": {**asdict(material), "keywords": json.dumps(material.keywords, ensure_ascii=False), "chunk_index": len(chunks)}})
+        metadata = {**asdict(material), "keywords": json.dumps(material.keywords, ensure_ascii=False), "linked_provisions": json.dumps(material.linked_provisions or [], ensure_ascii=False), "chunk_index": len(chunks)}
+        chunks.append({"text": text[start:end], "metadata": metadata})
         if end == len(text):
             break
         start = end - overlap
@@ -240,6 +305,14 @@ def ingest(source: str | Path, db_path: str | Path = "./legal_knowledge_db", col
     return len(chunks)
 
 
+def export_json(source: str | Path, output: str | Path) -> int:
+    """Convert a DOCX/TXT case library into the structured JSON source format."""
+    materials = load_materials(source, allow_fewer=True)
+    records = [asdict(material) for material in materials]
+    Path(output).write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    return len(records)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
@@ -250,7 +323,10 @@ def main() -> None:
     parser.add_argument("--allow-fewer", action="store_true")
     parser.add_argument("--expected", type=int, default=None, help="期望资料数量；不指定则读取全部")
     parser.add_argument("--reset", action="store_true", help="导入前清空整个集合，适合重建知识库")
+    parser.add_argument("--export-json", default=None, help="同时将源文件转换为结构化 JSON")
     args = parser.parse_args()
+    if args.export_json:
+        print(f"已导出 {export_json(args.source, args.export_json)} 条 JSON 案例")
     print(f"已写入 {ingest(args.source, args.db, args.collection, args.chunk_size, args.overlap, args.allow_fewer, args.expected, args.reset)} 个切块")
 
 

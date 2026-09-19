@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import re
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -9,14 +10,14 @@ from case_guard import directives as case_directives, check_all as case_check
 
 load_dotenv()
 client = OpenAI(
-    api_key=os.environ.get("DEEPSEEK_API_KEY") or __import__("streamlit").secrets["DEEPSEEK_API_KEY"],
+    api_key=os.environ["DEEPSEEK_API_KEY"],
     base_url="https://api.deepseek.com",
 )
 
 SYSTEM_PROMPT = """你是一个面向中小外贸从业者的中美跨境法律参考助手。
 
   【铁律，任何情况下不得违反】
-  1. 你只能依据【参考条文】作答。条文里没写的规则一律不得使用——包括但不限于：该条文的适用范围、生效条件、例外情形、当事
+    1. 你只能依据【参考条文】和【参考案例】作答。条文和案例里没写的规则一律不得使用——包括但不限于：该条文的适用范围、生效条件、例外情形、当事
   人所属国是否为缔约国、能否约定排除、与其他法律的关系。这些内容如果条文里没有原文，就当作你完全不知道，一个字都不许提。
   2. 严禁添加【参考条文】原文中没有的限定条件。凡是"前提是…""只有在…时""除非…""如果双方…""This applies
   if…""unless…""provided
@@ -38,6 +39,8 @@ SYSTEM_PROMPT = """你是一个面向中小外贸从业者的中美跨境法律�
   后面照常跟出处。绝对不许省略，更不许写"条文没有给出具体数字""没有固定标准""不存在标准答案"
   这类与【参考条文】直接矛盾的话——条文里给了你就得说。
   这些数字属于正文内容，不是第 5 条说的实务建议，不要挪到【实务提示】那一段里去。
+
+    10. 如果提供了【参考案例】，必须选择与问题最相关的案例，在回答正文中另起一段，以【相关案例】开头，写出案例名称和一条与本题直接相关的裁判规则。只能复述【参考案例】中的事实和规则，不得补充案例中没有的结论；没有相关案例时不要硬凑。
 
   【反例——绝对不许这样写】
   假设【参考条文】只给了"合同不需要书面形式"这一条，你写出"这适用于双方均为缔约国的情形，除非双方另有约定"——这是错误的，
@@ -62,11 +65,27 @@ def _is_chinese(text):
     return False
 
 
-def build_user_message(question, provisions, contract_text=None):
+def build_user_message(question, provisions, contract_text=None, cases=None):
     lines = ["【参考条文】"]
     for p in provisions:
         lines.append("[" + p["source"] + "] " + p["text"])
     lines.append("")
+
+    if cases:
+        lines.append("【参考案例】")
+        for item in cases:
+            title = item.get("title", "案例")
+            text = item.get("answer") or item.get("text") or ""
+            law = item.get("legal_basis") or ""
+            linked = item.get("matched_provisions") or item.get("linked_provisions") or []
+            linked_text = "、".join(str(number) for number in linked)
+            lines.append(f"- {title}（对应知识库第{linked_text}条）: {text}")
+            if law:
+                lines.append(f"  关联法条：{law}")
+        lines.append("")
+        lines.append("【案例使用要求】必须在回答正文中加入一段【相关案例】，引用最相关案例的名称和裁判规则；只能依据上面的案例内容，不得自行补充案例事实。")
+        lines.append("")
+
     lines.append("【用户问题】")
     lines.append(question)
     lines.append("")
@@ -85,6 +104,25 @@ def build_user_message(question, provisions, contract_text=None):
     return "\n".join(lines)
 
 
+def _ensure_case_section(reply, cases):
+    """确保检索到案例时，最终正文一定展示一条案例摘要。"""
+    if not cases or "【相关案例】" in reply:
+        return reply
+    case = cases[0]
+    source = case.get("answer") or case.get("text") or ""
+    topic = re.search(r"【主题】([^\n]+)", source)
+    rule = re.search(r"(?:规则摘要|法官在这类案件中是怎么处理的)：?([^\n]+)", source)
+    summary = (rule.group(1) if rule else source[:220]).strip()
+    summary = re.sub(r"^(?:规则摘要|法官在这类案件中是怎么处理的)[:：]\s*", "", summary)
+    title = case.get("title", "相关案例")
+    linked = case.get("matched_provisions") or case.get("linked_provisions") or []
+    linked_text = "、".join(str(number) for number in linked)
+    topic_text = topic.group(1).strip() if topic else ""
+    detail = summary or topic_text
+    return "%s\n\n【相关案例】\n%s（对应知识库第%s条）：%s" % (
+        reply.rstrip(), title, linked_text or "相关条目", detail)
+
+
 # 兜底话术只写正文，免责声明一律由 output_guard.enforce() 统一贴，
 # 免得两处各留一份、改了一处漏一处。
 FALLBACK_CN = "该问题超出当前知识库范围，建议向具备涉外执业资质的律师当面核实。"
@@ -93,16 +131,17 @@ FALLBACK_EN = ("This question is outside the current knowledge base. "
 
 
 def ask(question, provisions, contract_text=None, max_retry=1, verbose=True,
-        trace=None):
+        trace=None, cases=None):
     """
     trace: 传一个空 list 进来，就能拿到每一轮的审核明细
            [{"round":1, "raw":AI原话, "problems":[...], "passed":False}, ...]
            界面用它显示"程序拦了几次、拦了什么"。不传就跟以前一样。
+    cases: 参考案例列表，和 provisions 一起喂给模型
     """
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user",
-         "content": build_user_message(question, provisions, contract_text)},
+         "content": build_user_message(question, provisions, contract_text, cases)},
     ]
 
     for attempt in range(max_retry + 1):
@@ -139,7 +178,7 @@ def ask(question, provisions, contract_text=None, max_retry=1, verbose=True,
             })
 
         if passed:
-            return enforce(reply, question)
+            return enforce(_ensure_case_section(reply, cases), question)
 
         if verbose:
             print("!! 第 %d 次生成被拦下：" % (attempt + 1))

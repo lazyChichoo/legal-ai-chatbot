@@ -20,6 +20,7 @@ import citation_guard
 import kb
 import llm
 import output_guard
+from retrieve import retrieve_cases
 
 # 超范围文案直接用 llm 里那份，全系统只有一处措辞
 
@@ -68,16 +69,27 @@ def scene_header(provisions, question):
 
 
 def answer(question, contract_text=None, top_k=3, verbose=False, items=None,
-           show_scene=True):
+           show_scene=True, case_top_k=2, case_collection="legal_cases"):
     """
     question      : 用户问题（中文或英文）
     contract_text : 合同全文，没有就传 None（用于判断适用 CISG 还是美国州法）
     top_k         : 最多带几条知识库条文（必带条文不占这个名额）
     show_scene    : 回答开头是否带"本题属于哪个场景"，界面要自己排版就传 False
+    case_top_k    : 最多带几条相关案例
+    case_collection: 案例库 collection 名称
     返回：最终回答字符串
     """
     pin = case_guard.pins(question)
     provisions = kb.retrieve(question, items=items, top_k=top_k, pin=pin)
+    case_limit = len(provisions)
+    cases = retrieve_cases(
+        question,
+        db_path="./legal_knowledge_db",
+        collection_name=case_collection,
+        top_k=case_limit,
+        provision_nos=[p["no"] for p in provisions],
+        provision_scores={p["no"]: p.get("score", 0.0) for p in provisions},
+    ) if case_limit else []
 
     if not provisions:
         use_cn = output_guard.is_chinese(question)
@@ -85,7 +97,7 @@ def answer(question, contract_text=None, top_k=3, verbose=False, items=None,
                 else llm.FALLBACK_EN)
         return output_guard.enforce(base, question)
 
-    reply = llm.ask(question, provisions, contract_text, verbose=verbose)
+    reply = llm.ask(question, provisions, contract_text, verbose=verbose, cases=cases)
     if show_scene:
         head = scene_header(provisions, question)
         if head:
@@ -109,7 +121,8 @@ def explain(question, contract_text=None, top_k=3, items=None):
     }
 
 
-def answer_detailed(question, contract_text=None, top_k=3, items=None):
+def answer_detailed(question, contract_text=None, top_k=3, items=None,
+                   case_top_k=2, case_collection="legal_cases"):
     """
     给界面用：一次拿到最终回答 + 全部审核明细。
     返回 dict：
@@ -119,6 +132,7 @@ def answer_detailed(question, contract_text=None, top_k=3, items=None):
                     [{"no":9,"title":"…","scene":"实体救济"}, ...]
       scene_header  上面那份的现成文字版，懒得自己排版就直接贴在回答前面
       provisions    本次喂给 AI 的条文（含知识库编号）
+      cases         本次喂给 AI 的案例（若有）
       pins          触发了哪些必带条文规则
       law           合同法律适用的判断结果
       trace         每一轮的审核明细（程序拦了什么）
@@ -126,10 +140,16 @@ def answer_detailed(question, contract_text=None, top_k=3, items=None):
     """
     pin = case_guard.pins(question)
     provisions = kb.retrieve(question, items=items, top_k=top_k, pin=pin)
+    case_limit = len(provisions)
+    cases = retrieve_cases(question, db_path="./legal_knowledge_db",
+                          collection_name=case_collection, top_k=case_limit,
+                          provision_nos=[p["no"] for p in provisions],
+                          provision_scores={p["no"]: p.get("score", 0.0) for p in provisions}) if case_limit else []
     verdict, evidence = case_guard.detect_governing_law(contract_text)
 
     info = {
         "provisions": provisions,
+        "cases": cases,
         "scenes": scenes(provisions),
         "scene_header": scene_header(provisions, question),
         "pins": pin,
@@ -148,7 +168,7 @@ def answer_detailed(question, contract_text=None, top_k=3, items=None):
     trace = []
     info["called_api"] = True
     info["answer"] = llm.ask(question, provisions, contract_text,
-                             verbose=False, trace=trace)
+                             verbose=False, trace=trace, cases=cases)
     info["trace"] = trace
     return info
 
